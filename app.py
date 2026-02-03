@@ -1,22 +1,46 @@
-from flask import Flask, request, jsonify, render_template_string, redirect, url_for
+import streamlit as st
 import pickle
 import re
 import nltk
-import webbrowser
+import os
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 
-nltk.download("stopwords")
-nltk.download("wordnet")
+# -----------------------------
+# SAFE NLTK SETUP FOR HF
+# -----------------------------
+NLTK_DATA_DIR = "/tmp/nltk_data"
+os.makedirs(NLTK_DATA_DIR, exist_ok=True)
+nltk.data.path.append(NLTK_DATA_DIR)
 
-app = Flask(__name__)
+@st.cache_resource
+def setup_nltk():
+    try:
+        stopwords.words("english")
+    except LookupError:
+        nltk.download("stopwords", download_dir=NLTK_DATA_DIR)
+        nltk.download("wordnet", download_dir=NLTK_DATA_DIR)
 
-# Load trained model and vectorizer
-model, tfidf = pickle.load(open("final_sentiment_model.pkl", "rb"))
+setup_nltk()
+
+# -----------------------------
+# STREAMLIT UI
+# -----------------------------
+st.set_page_config(page_title="Flipkart Sentiment Analysis", layout="centered")
+st.title("Sentiment Analysis of Flipkart Product Reviews")
+
+# -----------------------------
+# LOAD MODEL
+# -----------------------------
+with open("final_sentiment_model.pkl", "rb") as f:
+    model, tfidf = pickle.load(f)
 
 stop_words = set(stopwords.words("english"))
 lemmatizer = WordNetLemmatizer()
 
+# -----------------------------
+# TEXT CLEANING
+# -----------------------------
 def clean_text(text):
     text = text.lower()
     text = re.sub(r"[^a-zA-Z]", " ", text)
@@ -24,42 +48,20 @@ def clean_text(text):
     words = [lemmatizer.lemmatize(w) for w in words if w not in stop_words]
     return " ".join(words)
 
-# 🔹 Default route → redirects to prediction page
-@app.route("/")
-def home():
-    return redirect(url_for("ui"))
+# -----------------------------
+# USER INPUT & PREDICTION
+# -----------------------------
+review = st.text_area("Enter your review")
 
-# 🔹 Prediction UI
-@app.route("/ui")
-def ui():
-    return render_template_string("""
-        <h2>Sentiment Analysis of Product Reviews</h2>
-        <form action="/predict_ui" method="post">
-            <textarea name="review" rows="5" cols="60"
-            placeholder="Enter your review here"></textarea><br><br>
-            <input type="submit">
-        </form>
-    """)
+if st.button("Predict Sentiment"):
+    if review.strip() == "":
+        st.warning("Please enter a review.")
+    else:
+        cleaned = clean_text(review)
+        vector = tfidf.transform([cleaned])
+        prediction = model.predict(vector)[0]
 
-# 🔹 UI Prediction
-@app.route("/predict_ui", methods=["POST"])
-def predict_ui():
-    review = request.form["review"]
-    cleaned = clean_text(review)
-    vector = tfidf.transform([cleaned])
-    prediction = model.predict(vector)[0]
-    return f"<h3>Predicted Sentiment: {prediction}</h3>"
-
-# 🔹 API Prediction (for Postman / evaluation)
-@app.route("/predict", methods=["POST"])
-def predict():
-    data = request.get_json()
-    review = data["review"]
-    cleaned = clean_text(review)
-    vector = tfidf.transform([cleaned])
-    prediction = model.predict(vector)[0]
-    return jsonify({"sentiment": prediction})
-
-if __name__ == "__main__":
-    webbrowser.open("http://127.0.0.1:5000/")
-    app.run(host="0.0.0.0", port=5000)
+        if prediction.lower() == "positive":
+            st.success("Predicted Sentiment: POSITIVE 😊")
+        else:
+            st.error("Predicted Sentiment: NEGATIVE 😞")
